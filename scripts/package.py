@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 INFO = ast.literal_eval(ast.parse((ROOT/'__init__.py').read_text()).body[1].value)
 VERSION = '.'.join(map(str, INFO['version']))
 FILES = ['__init__.py', 'import_bridge.py', 'job_runner.py', 'reconstruction.py',
-         'toolchain.py', 'README.md', 'LICENSE', 'ready.png']
+         'toolchain.py', 'README.md', 'docs/technical-guide.md', 'LICENSE', 'ready.png']
 
 
 def build(output, colmap=None, ffmpeg=None):
