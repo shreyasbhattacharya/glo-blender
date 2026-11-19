@@ -21,7 +21,9 @@ ffmpeg -version
 ffprobe -version
 ```
 
-On **Windows**, with [Miniforge](https://github.com/conda-forge/miniforge) installed, run in its prompt. This is an optional manual Conda setup, not required for the bundled release:
+On **Windows x64**, download the [Miniforge Windows installer](https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Windows-x86_64.exe), install it, and open **Miniforge Prompt**. Then run the commands below. This is an optional manual Conda setup, not required for the bundled release.
+
+Miniforge is used here to request a specific CPU COLMAP build and resolve its dependencies alongside FFmpeg. It is not the default general-purpose Windows package manager. Microsoft's WinGet is another option for installing software, but package availability, COLMAP build variants and executable paths must be checked separately; these instructions do not claim a tested WinGet setup.
 
 ```bat
 conda create -n glomap-tools --override-channels -c conda-forge "colmap=4.2.1=cpu*" "ffmpeg>=7.1" -y
