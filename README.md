@@ -4,12 +4,68 @@ An install-from-disk Blender add-on for the existing all-frame video reconstruct
 
 ## Install
 
+### Release choices and platform status
+
+- **Regular ZIP (`blender_glomap-v0.3.13.zip`):** Linux installation and **Install Tools** have been tested on the development machine. Testing on other operating systems is pending.
+- **Windows x64 tools-included ZIP (`blender_glomap-v0.3.13-windows-x64.zip`):** includes COLMAP, FFmpeg, FFprobe and their bundled dependencies. Native Windows testing is pending. Uses included executables without Micromamba installation; **Install Tools** verifies them and can run offline.
+- Both variants install directly into Blender and include Phot. Install only one variant at a time. The Windows bundle does not guarantee that Windows Security will allow the executables, nor does it resolve a Phot import error by itself.
+
+### Manual tools (recommended on other platforms while testing is pending)
+
+On **macOS**, with [Homebrew](https://brew.sh/) installed:
+
+```sh
+brew install colmap ffmpeg
+colmap help
+ffmpeg -version
+ffprobe -version
+```
+
+On **Windows**, with [Miniforge](https://github.com/conda-forge/miniforge) installed, run in its prompt. This is an optional manual Conda setup, not required for the bundled release:
+
+```bat
+conda create -n glomap-tools --override-channels -c conda-forge "colmap=4.2.1=cpu*" "ffmpeg>=7.1" -y
+conda activate glomap-tools
+colmap help
+ffmpeg -version
+ffprobe -version
+where colmap
+where ffmpeg
+where ffprobe
+```
+
+For **Ubuntu/Debian**, system packages are another option (versions vary by distribution):
+
+```sh
+sudo apt update
+sudo apt install colmap ffmpeg
+colmap help
+ffmpeg -version
+ffprobe -version
+```
+
+FFprobe comes with FFmpeg in these packages. These are setup instructions, not claims of native macOS/Windows validation. In Blender, select executable paths under **Setup** and run **Check Setup**. On macOS/Linux, `command -v colmap ffmpeg ffprobe` prints the paths; on Windows use the `where` results. Windows COLMAP and its DLL dependencies must remain together. Installing through a different package manager does not bypass a security block.
+
+### Building releases
+
+Run `python scripts/package.py` for the regular ZIP. For the Windows edition, provide the official COLMAP 4.2.1 non-CUDA Windows ZIP and the FFmpeg Windows essentials ZIP:
+
+```sh
+python scripts/package.py --colmap /path/to/colmap.zip --ffmpeg /path/to/ffmpeg.zip
+```
+
+Outputs and SHA-256 sidecars go into `deliverables/` (excluded from Git). Dependencies and upstream notices are retained; archive hashes are recorded inside the Windows package. Source archives: [COLMAP 4.2.1](https://github.com/colmap/colmap/releases/tag/4.2.1) and [FFmpeg Windows builds](https://www.gyan.dev/ffmpeg/builds/). The FFmpeg build's license and corresponding-source information accompany that distribution. Preserve these notices when redistributing.
+
 1. Keep `blender_glomap.zip` zipped. In Blender, open **Edit → Preferences → Add-ons → Install from Disk**, select it, and enable **Video to 3D — Blender GLOMAP**. Depending on the Blender version, Install from Disk is in the add-on preferences dropdown.
 2. Open the **Video to 3D** sidebar tab. Click **Set Up Included Photogrammetry Importer** once. Its ZIP is already inside this package: a separate download is not required. The setup button installs and enables it as a normal, separate Blender add-on. An existing enabled installation is reused and never overwritten.
-3. Expand **Setup** and click **Check Setup**. If tools are missing, click **Install Tools**. Blender downloads the Micromamba build for its platform, checks its SHA-256 hash, and uses it to install CPU COLMAP, FFmpeg and FFprobe from conda-forge into Blender’s user data directory. The installer runs all three tools before reporting success. It requires Blender online access. **Setup Details** shows the download size as data arrives, live package installation output and the verification count. **Open Setup Logs** opens the full logs.
+3. Expand **Setup** and click **Check Setup**. In the Windows tools-included edition, the bundled tools are selected automatically; **Install Tools** only verifies them. In the regular edition, **Install Tools** downloads Micromamba, checks its SHA-256 hash, and installs CPU COLMAP, FFmpeg and FFprobe from conda-forge into Blender’s user data directory. This download requires Blender online access. Both paths run all three tools before reporting success. **Setup Details** shows progress and live output. **Open Setup Logs** opens the logs.
 4. To use your own executables, set their paths under **Setup** and run **Check Setup**. You can also enter a tool directory containing the executable directly or under `bin/`. For an in-place COLMAP build the add-on also checks `build/src/colmap/exe/`. FFprobe is optional for playback FPS.
 
 If Windows blocks or quarantines an executable, **Setup Details** includes the available Windows error. Check **Windows Security → Protection history** for Defender detections. On managed PCs, ask your administrator for approved builds and select them under **Setup**. For a bundled importer setup failure, open `importer-setup.log` from **Open Setup Logs**.
+
+**Clear Setup Output** clears the panel's recent output and collapses Setup Details; it does not delete logs or uninstall tools. While setup is running, new output can still arrive. **Open Setup Logs** opens the setup job's log directory, not a reconstruction batch directory. `setup-status.log` is created before the job starts; `setup-diagnostics.log` records installation/verification success or failure. `install.log` exists only when Micromamba package installation starts. The Windows bundle instead produces `install-check-colmap.log`, `install-check-ffmpeg.log`, and `install-check-ffprobe.log` as verification reaches each executable.
+
+On Windows, an unverified-publisher block for `colmap.exe` is separate from Micromamba's “Non-conda folder exists at prefix” error. Changing to Miniconda does not establish trust in the COLMAP executable. Keep Windows security enabled and use an approved compatible executable if the downloaded build is blocked. The installer preserves existing incomplete environment folders and chooses a fresh destination on retry.
 
 The included COLMAP import path does not need the importer's optional Pillow, Pyntcloud, laspy, or lazrs packages. Those are relevant to other formats and features offered by that add-on. The add-on does not run pip or download software on enable.
 

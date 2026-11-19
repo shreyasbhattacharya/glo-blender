@@ -352,8 +352,8 @@ class Pipeline:
                 shutil.rmtree(stage)
 
     def batch(self, sources, output):
-        self.preflight()
         failed = False
+        preflight_done = False
         pending = list(range(len(sources)))
         while pending:
             self.index = self.job.next_clip(pending)
@@ -384,6 +384,9 @@ class Pipeline:
                     continue
                 if self.scene.exists():
                     self.archive()
+                if not preflight_done:
+                    self.preflight()
+                    preflight_done = True
                 self.process(source, dest)
                 self.job.event(self.index, 'finished', dest)
             except (OSError, RuntimeError, ValueError, KeyError, IndexError) as exc:

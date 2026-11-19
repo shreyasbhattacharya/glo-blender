@@ -186,7 +186,11 @@ def import_dataset(dataset, settings, probe='ffprobe'):
         for collection in set(bpy.data.collections) - previous:
             bpy.data.collections.remove(collection)
         try:
-            (dataset / 'import-error.log').write_text(traceback.format_exc(), encoding='utf-8')
+            details = (f'Blender: {bpy.app.version_string}\nDataset: {dataset}\n'
+                       f'Model directory passed to Phot: {options["directory"]!r}\n'
+                       f'Model entries: {sorted(p.name for p in model.iterdir())!r}\n'
+                       f'Images directory: {images}\n')
+            (dataset / 'import-error.log').write_text(details + traceback.format_exc(), encoding='utf-8')
         except OSError:
             pass
         raise RuntimeError(f'Track saved. Blender import failed: {import_error_details(exc)}') from exc
@@ -203,6 +207,30 @@ def import_dataset(dataset, settings, probe='ffprobe'):
             for owner in linked_from:
                 if owner != parent:
                     owner.children.unlink(collection)
+        # Hide the per-frame cameras in the viewport. Blender may suffix the
+        # collection name (for example, "Cameras.001") on subsequent imports,
+        # so identify camera collections by their contents, not their name.
+        camera_collections = [
+            collection for collection in created
+            if settings.animate_camera and collection != parent
+            and collection.objects
+            and all(obj.type == 'CAMERA' and not (obj.animation_data and obj.animation_data.action)
+                    for obj in collection.all_objects)
+        ]
+
+        def hide_layer_collection(layer_collection, target):
+            if layer_collection.collection == target:
+                layer_collection.hide_viewport = True
+                return True
+            return any(
+                hide_layer_collection(child, target)
+                for child in layer_collection.children
+            )
+
+        for cameras in camera_collections:
+            cameras.hide_viewport = True
+            for view_layer in bpy.context.scene.view_layers:
+                hide_layer_collection(view_layer.layer_collection, cameras)
     parent['glomap_complete'] = True
     warning = ''
     rate_info = source_rate(video, probe)

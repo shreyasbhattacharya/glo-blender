@@ -2,7 +2,7 @@
 bl_info = {
     'name': 'Video to 3D — Blender GLOMAP',
     'author': 'blender-glomap contributors',
-    'version': (0, 3, 10),
+    'version': (0, 3, 13),
     'blender': (4, 0, 0),
     'location': '3D View > Sidebar > Video to 3D',
     'description': 'Track videos, reconstruct sparse scenes, and import each clip into its own collection',
@@ -388,7 +388,7 @@ class GLOMAP_OT_install_tools(Operator):
 
     def execute(self, context):
         global _INSTALLING
-        if not getattr(bpy.app, 'online_access', True):
+        if not tool_setup.bundled_tools() and not getattr(bpy.app, 'online_access', True):
             self.report({'ERROR'}, 'Enable Allow Online Access in Blender Preferences to download tools')
             return {'CANCELLED'}
         try:
@@ -535,6 +535,23 @@ class GLOMAP_OT_import(Operator):
             return {'CANCELLED'}
 
 
+class GLOMAP_OT_clear_setup_output(Operator):
+    bl_idname = 'glomap.clear_setup_output'
+    bl_label = 'Clear Setup Output'
+    bl_description = 'Clear panel output without deleting log files or changing installed tools'
+
+    def execute(self, context):
+        global _IMPORTER_ERROR
+        with _SETUP.console_lock:
+            _SETUP.console.clear()
+        _IMPORTER_ERROR = ''
+        if not _SETUP.running:
+            _SETUP.status = 'Ready'
+            _SETUP.install_step = None
+        context.scene.glomap.setup_details = False
+        return {'FINISHED'}
+
+
 class GLOMAP_OT_logs(Operator):
     bl_idname = 'glomap.open_logs'
     bl_label = 'Open Logs Folder'
@@ -543,7 +560,7 @@ class GLOMAP_OT_logs(Operator):
 
     def execute(self, context):
         if self.setup:
-            path = tool_root()
+            path = _SETUP.log_path.parent if _SETUP.log_path else tool_root()
             if not path.is_dir():
                 self.report({'ERROR'}, 'No setup logs yet')
                 return {'CANCELLED'}
@@ -658,6 +675,7 @@ class GLOMAP_PT_sidebar(Panel):
                 if lines or _IMPORTER_ERROR:
                     setup.operator('glomap.copy_terminal', text='Copy Setup Details', icon='COPYDOWN').setup = True
                 setup.operator('glomap.open_logs', text='Open Setup Logs', icon='TEXT').setup = True
+            setup.operator('glomap.clear_setup_output', icon='X')
 
         folders = layout.box()
         folders.prop(settings, 'folders_open',
@@ -791,7 +809,7 @@ def before_load(_):
 _CLASSES = (
     GLOMAP_Preferences, GLOMAP_Video, GLOMAP_Settings, GLOMAP_UL_videos,
     GLOMAP_OT_output, GLOMAP_OT_add, GLOMAP_OT_remove,
-    GLOMAP_OT_setup, GLOMAP_OT_check, GLOMAP_OT_install_tools, GLOMAP_OT_cancel_setup, GLOMAP_OT_start, GLOMAP_OT_cancel,
+    GLOMAP_OT_setup, GLOMAP_OT_check, GLOMAP_OT_install_tools, GLOMAP_OT_cancel_setup, GLOMAP_OT_clear_setup_output, GLOMAP_OT_start, GLOMAP_OT_cancel,
     GLOMAP_OT_pause, GLOMAP_OT_import, GLOMAP_OT_logs, GLOMAP_OT_copy_terminal, GLOMAP_PT_sidebar,
 )
 

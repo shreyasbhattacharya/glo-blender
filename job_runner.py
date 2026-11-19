@@ -206,6 +206,8 @@ class Job:
     def launch(self, target, log, clips=()):
         if self.running:
             raise ValueError('A job is already running')
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(f'Job started. Logs: {log.parent.resolve()}\n', encoding='utf-8')
         self.stop.clear()
         self.paused = False
         self.paused_clips.clear()
@@ -229,6 +231,8 @@ class Job:
             except Cancelled:
                 code = 130
             except Exception as exc:
+                with log.open('a', encoding='utf-8') as stream:
+                    print(f'{type(exc).__name__}: {exc}', file=stream)
                 self.message(str(exc))
             finally:
                 self.events.put((None, None, code))

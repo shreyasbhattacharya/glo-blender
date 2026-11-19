@@ -22,6 +22,20 @@ CHECKS = {'colmap': ['help'], 'ffmpeg': ['-version'], 'ffprobe': ['-version']}
 COLMAP_VERSION = '4.2.1'
 
 
+def bundled_tools():
+    base = Path(__file__).parent/'bundled'/'tools'/'windows-x64'
+    return base if target() == 'win-64' and base.is_dir() else None
+
+
+def bundled_executable(name):
+    base = bundled_tools()
+    if base:
+        matches = sorted((base/('colmap' if name == 'colmap' else 'ffmpeg')).rglob(f'{name}.exe'))
+        if len(matches) == 1:
+            return matches[0]
+        raise ValueError(f'Bundled {name}.exe missing or ambiguous. Re-extract the Windows release.')
+
+
 def target():
     machine = platform.machine().lower()
     arch = '64' if machine in ('x86_64', 'amd64') else 'arm64' if machine in ('aarch64', 'arm64') else machine
@@ -46,6 +60,15 @@ def environment(root, *, install_prefix=None):
         paths = [base/'Library/bin', base/'Library/mingw-w64/bin', base/'Library/usr/bin',
                  base/'Scripts', base] if os.name == 'nt' else [base/'bin']
         env['PATH'] = os.pathsep.join([*map(str, paths), env.get('PATH', '')])
+    bundled = bundled_tools()
+    if bundled:
+        paths = sorted({str(p.parent) for p in bundled.rglob('*.dll')} |
+                       {str(p.parent) for p in bundled.rglob('*.exe')})
+        env['PATH'] = os.pathsep.join([*paths, env.get('PATH', '')])
+        plugins = sorted((bundled/'colmap').rglob('plugins'))
+        if plugins:
+            env['QT_PLUGIN_PATH'] = os.pathsep.join(map(str, plugins))
+            env.pop('QT_QPA_PLATFORM_PLUGIN_PATH', None)
     env['LC_ALL'] = 'C'
     env.setdefault('QT_QPA_PLATFORM', 'offscreen')
     return env
@@ -54,6 +77,8 @@ def environment(root, *, install_prefix=None):
 def resolve_tool(name, value, root):
     value = os.path.expanduser(value.strip()) or name
     folder = Path(value)
+    if value == name and bundled_tools():
+        return str(bundled_executable(name))
     if value != name and folder.is_dir():
         filename = f'{name}.exe' if os.name == 'nt' else name
         locations = [Path('.'), Path('bin'), Path('Library/bin')]
@@ -73,6 +98,32 @@ def resolve_tool(name, value, root):
 
 
 def install(job, root, log_dir):
+    log_dir.mkdir(parents=True, exist_ok=True)
+    status = log_dir/'setup-diagnostics.log'
+    status.write_text(f'Platform: {platform.platform()}\nLogs: {log_dir.resolve()}\n', encoding='utf-8')
+    try:
+        if bundled_tools():
+            tools = {name: str(bundled_executable(name)) for name in CHECKS}
+            runner = Pipeline(job, root, {}, tools, environment(root), log_dir)
+            for i, (name, args) in enumerate(CHECKS.items(), 1):
+                job.message(f'Verifying bundled {name.upper()}')
+                job.install_step = (4, i - 1, len(CHECKS))
+                runner.run_command(name, args, log_dir/f'install-check-{name}.log')
+            job.install_step = (4, len(CHECKS), len(CHECKS))
+            job.message('Bundled COLMAP, FFmpeg and FFprobe verified')
+            result = 0
+        else:
+            result = install_environment(job, root, log_dir)
+    except Exception as exc:
+        with status.open('a', encoding='utf-8') as stream:
+            stream.write(f'Failed: {type(exc).__name__}: {exc}\n')
+        raise
+    with status.open('a', encoding='utf-8') as stream:
+        stream.write('All executable checks passed.\n')
+    return result
+
+
+def install_environment(job, root, log_dir):
     subdir = target()
     if subdir not in BOOTSTRAP:
         raise RuntimeError(f'No automatic tool install for {platform.system()} {platform.machine()}. '
@@ -84,6 +135,7 @@ def install(job, root, log_dir):
         raise RuntimeError(f'Tool installation is locked at {lock}') from exc
     creating_env = False
     try:
+        job.add_output([f'Setup logs: {log_dir.resolve()}'], None)
         dest = prefix(root)
         if not (dest/'.glomap-ready').is_file():
             original_dest = dest
@@ -167,6 +219,7 @@ def install(job, root, log_dir):
         job.message('COLMAP, FFmpeg and FFprobe verified')
         return 0
     except Exception:
+        job.add_output([f'Setup failed. Logs retained in: {log_dir.resolve()}'], None)
         if creating_env and dest.exists():
             shutil.rmtree(dest, ignore_errors=True)
         raise
