@@ -42,6 +42,10 @@ class Cancelled(Exception):
     pass
 
 
+class WindowsLoaderError(RuntimeError):
+    """A child failed before its CLI could run."""
+
+
 def windows_error_hint(code):
     if code in (225, 226, 0xC0000906, 0xC0000907):
         return 'Windows antivirus blocked or removed the file. See Windows Security > Protection history.'
@@ -50,7 +54,9 @@ def windows_error_hint(code):
     if code == 5:
         return 'Windows denied access. Check file permissions and Windows Security.'
     if code == 0xC0000135:
-        return 'A required DLL could not be loaded.'
+        return ('A required DLL could not be loaded. Click Install / Repair Tools to install a '
+                'separate tool environment. For manually installed tools, install the latest '
+                'Microsoft Visual C++ x64 Redistributable: https://aka.ms/vc14/vc_redist.x64.exe')
     if code in (193, 0xC000007B):
         return 'The executable or one of its DLLs has an incompatible format.'
     return ''
@@ -97,10 +103,10 @@ class Pipeline:
             stream.flush()
             self.job.begin_command(command, log)
 
-            def fail(message):
+            def fail(message, error_type=RuntimeError):
                 stream.write(message + '\n')
                 self.job.add_output([message], None)
-                return RuntimeError(message)
+                return error_type(message)
 
             try:
                 child = subprocess.Popen(command, env=self.env, stdin=subprocess.DEVNULL,
@@ -159,8 +165,20 @@ class Pipeline:
                 if code:
                     status = code & 0xFFFFFFFF
                     hint = windows_error_hint(status) if os.name == 'nt' and status >= 0x80000000 else ''
+                    if os.name == 'nt' and status in (0xC0000135, 0xC000007B, 0xC0000139):
+                        from .windows_dll import dependency_report
+                        try:
+                            details, missing = dependency_report(command[0], self.env)
+                            report = log.with_suffix('.dlls.log')
+                            report.write_text('\n'.join(details) + '\n', encoding='utf-8')
+                            hint += (f' Missing DLLs: {", ".join(missing)}.' if missing else '')
+                            hint += f' DLL diagnostics: {report}.'
+                        except (OSError, ValueError) as exc:
+                            hint += f' Could not write DLL diagnostics: {exc}.'
                     if hint:
-                        raise fail(f'{command[0]} exited with Windows status 0x{status:08X}. {hint} See {log.name}.')
+                        error_type = WindowsLoaderError if status in (0xC0000135, 0xC000007B, 0xC0000139) else RuntimeError
+                        raise fail(f'{command[0]} exited with Windows status 0x{status:08X}. {hint} See {log.name}.',
+                                   error_type)
                     raise fail(f'{tool} exited with code {code}. See {log.name}.')
         return log
 

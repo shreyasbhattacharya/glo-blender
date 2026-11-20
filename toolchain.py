@@ -9,7 +9,7 @@ import tarfile
 import tempfile
 import urllib.request
 
-from .reconstruction import Pipeline
+from .reconstruction import Pipeline, WindowsLoaderError
 
 BOOTSTRAP = {
     'linux-64': '3e360875eac0d8585b926098ba1450c541ea7bbd3ee142b3d5115659f9f588f8',
@@ -36,6 +36,19 @@ def bundled_executable(name):
         raise ValueError(f'Bundled {name}.exe missing or ambiguous. Re-extract the Windows release.')
 
 
+def prepare_bootstrap_runtime(folder):
+    """Micromamba itself needs the VC runtime before it can install packages."""
+    if target() != 'win-64' or not bundled_tools():
+        return
+    source = bundled_executable('colmap').parent
+    for name in ('msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll'):
+        if not (source/name).is_file():
+            raise RuntimeError(f'Bundled runtime missing: {source/name}. Reinstall the current Windows ZIP.')
+    for pattern in ('msvcp140*.dll', 'vcruntime140*.dll', 'concrt140.dll'):
+        for path in source.glob(pattern):
+            shutil.copy2(path, folder/path.name)
+
+
 def target():
     machine = platform.machine().lower()
     arch = '64' if machine in ('x86_64', 'amd64') else 'arm64' if machine in ('aarch64', 'arm64') else machine
@@ -56,12 +69,19 @@ def prefix(root):
 def environment(root, *, install_prefix=None):
     base = install_prefix if install_prefix is not None else prefix(root)
     env = os.environ.copy()
-    if install_prefix is not None or (base/'.glomap-ready').is_file():
+    managed = install_prefix is not None or (base/'.glomap-ready').is_file()
+    if managed:
         paths = [base/'Library/bin', base/'Library/mingw-w64/bin', base/'Library/usr/bin',
-                 base/'Scripts', base] if os.name == 'nt' else [base/'bin']
+                 base/'Scripts', base] if target() == 'win-64' else [base/'bin']
         env['PATH'] = os.pathsep.join([*map(str, paths), env.get('PATH', '')])
+        # Qt must not mix plugins from the bundled COLMAP with conda's Qt.
+        env.pop('QT_PLUGIN_PATH', None)
+        env.pop('QT_QPA_PLATFORM_PLUGIN_PATH', None)
+        plugins = base/('Library/plugins' if target() == 'win-64' else 'plugins')
+        if plugins.is_dir():
+            env['QT_PLUGIN_PATH'] = str(plugins)
     bundled = bundled_tools()
-    if bundled:
+    if bundled and not managed:
         paths = sorted({str(p.parent) for p in bundled.rglob('*.dll')} |
                        {str(p.parent) for p in bundled.rglob('*.exe')})
         env['PATH'] = os.pathsep.join([*paths, env.get('PATH', '')])
@@ -77,6 +97,13 @@ def environment(root, *, install_prefix=None):
 def resolve_tool(name, value, root):
     value = os.path.expanduser(value.strip()) or name
     folder = Path(value)
+    base = prefix(root)
+    if value == name and (base/'.glomap-ready').is_file():
+        windows = target() == 'win-64'
+        path = base/('Library/bin' if windows else 'bin')/(name + ('.exe' if windows else ''))
+        if not path.is_file():
+            raise ValueError(f'Installed {name.upper()} missing at {path}. Run Install / Repair Tools.')
+        return str(path)
     if value == name and bundled_tools():
         return str(bundled_executable(name))
     if value != name and folder.is_dir():
@@ -97,22 +124,37 @@ def resolve_tool(name, value, root):
     return str(Path(path).absolute())
 
 
-def install(job, root, log_dir):
+def install(job, root, log_dir, *, allow_download=True):
     log_dir.mkdir(parents=True, exist_ok=True)
     status = log_dir/'setup-diagnostics.log'
     status.write_text(f'Platform: {platform.platform()}\nLogs: {log_dir.resolve()}\n', encoding='utf-8')
     try:
-        if bundled_tools():
+        if bundled_tools() and not (prefix(root)/'.glomap-ready').is_file():
             tools = {name: str(bundled_executable(name)) for name in CHECKS}
             runner = Pipeline(job, root, {}, tools, environment(root), log_dir)
-            for i, (name, args) in enumerate(CHECKS.items(), 1):
-                job.message(f'Verifying bundled {name.upper()}')
-                job.install_step = (4, i - 1, len(CHECKS))
-                runner.run_command(name, args, log_dir/f'install-check-{name}.log')
-            job.install_step = (4, len(CHECKS), len(CHECKS))
-            job.message('Bundled COLMAP, FFmpeg and FFprobe verified')
-            result = 0
+            try:
+                for i, (name, args) in enumerate(CHECKS.items(), 1):
+                    job.message(f'Verifying bundled {name.upper()}')
+                    job.install_step = (4, i - 1, len(CHECKS))
+                    runner.run_command(name, args, log_dir/f'bundled-check-{name}.log')
+            except WindowsLoaderError as exc:
+                with status.open('a', encoding='utf-8') as stream:
+                    stream.write(f'Bundled tool loader failure: {exc}\n')
+                job.check_cancelled()
+                if not allow_download:
+                    raise RuntimeError('Bundled tools need repair. Enable Allow Online Access in '
+                                       'Blender Preferences, then click Install / Repair Tools.') from exc
+                job.message('Repairing tools with a separate conda-forge environment')
+                job.add_output(['Bundled loader failure; downloading a complete CPU tool environment.',
+                                'Original failure retained in bundled-check-*.log.'], None)
+                result = install_environment(job, root, log_dir)
+            else:
+                job.install_step = (4, len(CHECKS), len(CHECKS))
+                job.message('Bundled COLMAP, FFmpeg and FFprobe verified')
+                result = 0
         else:
+            if not allow_download and not (prefix(root)/'.glomap-ready').is_file():
+                raise RuntimeError('Enable Allow Online Access in Blender Preferences to download tools.')
             result = install_environment(job, root, log_dir)
     except Exception as exc:
         with status.open('a', encoding='utf-8') as stream:
@@ -172,6 +214,7 @@ def install_environment(job, root, log_dir):
                     with bundle.extractfile('Library/bin/micromamba.exe' if os.name == 'nt' else 'bin/micromamba') as member:
                         shutil.copyfileobj(member, output)
                 exe.chmod(0o700)
+                prepare_bootstrap_runtime(folder)
                 runner = Pipeline(job, root, {}, {'micromamba': str(exe)}, os.environ.copy(), log_dir)
                 runner.run_command('micromamba', ['--version'], log_dir/'micromamba-version.log')
                 job.install_step = (3, 0, 0)

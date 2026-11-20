@@ -2,7 +2,7 @@
 bl_info = {
     'name': 'Video to 3D — Blender GLOMAP',
     'author': 'blender-glomap contributors',
-    'version': (0, 3, 13),
+    'version': (0, 3, 16),
     'blender': (4, 0, 0),
     'location': '3D View > Sidebar > Video to 3D',
     'description': 'Track videos, reconstruct sparse scenes, and import each clip into its own collection',
@@ -10,6 +10,7 @@ bl_info = {
 }
 
 import atexit
+import importlib
 import os
 from pathlib import Path
 import textwrap
@@ -22,6 +23,12 @@ from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
 from bpy.types import AddonPreferences, Operator, Panel, PropertyGroup, UIList
 from bpy_extras.io_utils import ImportHelper
+
+# Blender may reload only __init__ during an add-on update. Reload dependencies
+# in order so a new panel cannot keep running the previous release's pipeline.
+if 'jobs' in locals():
+    for _module in ('windows_dll', 'reconstruction', 'job_runner', 'toolchain', 'import_bridge'):
+        importlib.reload(importlib.import_module(f'.{_module}', __package__))
 
 from . import import_bridge, job_runner as jobs, toolchain as tool_setup
 from .reconstruction import windows_error_hint
@@ -379,8 +386,8 @@ class GLOMAP_OT_check(Operator):
 
 class GLOMAP_OT_install_tools(Operator):
     bl_idname = 'glomap.install_tools'
-    bl_label = 'Install Tools'
-    bl_description = 'Install and verify CPU COLMAP, FFmpeg and FFprobe in Blender’s user data folder'
+    bl_label = 'Install / Repair Tools'
+    bl_description = 'Verify tools; download a separate CPU tool environment if bundled DLL loading fails'
 
     @classmethod
     def poll(cls, context):
@@ -388,7 +395,8 @@ class GLOMAP_OT_install_tools(Operator):
 
     def execute(self, context):
         global _INSTALLING
-        if not tool_setup.bundled_tools() and not getattr(bpy.app, 'online_access', True):
+        allow_download = getattr(bpy.app, 'online_access', True)
+        if not tool_setup.bundled_tools() and not allow_download:
             self.report({'ERROR'}, 'Enable Allow Online Access in Blender Preferences to download tools')
             return {'CANCELLED'}
         try:
@@ -397,7 +405,8 @@ class GLOMAP_OT_install_tools(Operator):
             _TOOL_RESULTS.clear()
             _INSTALLING = True
             context.scene.glomap.setup_details = True
-            _SETUP.launch(lambda: tool_setup.install(_SETUP, root, root), root/'setup-status.log')
+            _SETUP.launch(lambda: tool_setup.install(_SETUP, root, root, allow_download=allow_download),
+                          root/'setup-status.log')
             if not bpy.app.timers.is_registered(tick_setup):
                 bpy.app.timers.register(tick_setup, first_interval=0.2)
             return {'FINISHED'}
@@ -590,7 +599,11 @@ class GLOMAP_OT_copy_terminal(Operator):
     def execute(self, context):
         if self.setup:
             lines, _, _, _ = _SETUP.console_snapshot()
-            details = [_IMPORTER_ERROR, _SETUP.status, *lines]
+            details = [f'Blender GLOMAP {".".join(map(str, bl_info["version"]))}',
+                       f'Loaded add-on: {Path(__file__).resolve()}',
+                       f'Blender: {bpy.app.version_string}',
+                       'Importer: ' + ('enabled' if import_bridge.enabled() else 'not enabled'),
+                       _IMPORTER_ERROR, _SETUP.status, *lines]
         else:
             details, _, _, _ = _JOB.console_snapshot()
         context.window_manager.clipboard = '\n'.join(line for line in details if line)
@@ -610,12 +623,15 @@ class GLOMAP_PT_sidebar(Panel):
         setup = layout.box()
         setup.prop(settings, 'setup_open', icon='TRIA_DOWN' if settings.setup_open else 'TRIA_RIGHT', emboss=False)
         if settings.setup_open:
+            setup.label(text='Blender GLOMAP ' + '.'.join(map(str, bl_info['version'])))
             check = setup.row()
             check.scale_y = 1.5
             check.operator('glomap.check_tools', icon='CHECKMARK')
             setup.operator('glomap.install_tools', icon='IMPORT')
             if not import_bridge.enabled():
                 setup.operator('glomap.setup_importer', text='Set Up Importer', icon='IMPORT')
+            setup.label(text='Importer: ' + ('enabled' if import_bridge.enabled() else 'not enabled'),
+                        icon='CHECKMARK' if import_bridge.enabled() else 'INFO')
             if _SETUP.running:
                 setup.operator('glomap.cancel_setup', icon='CANCEL')
             prefs = preferences()
@@ -651,12 +667,14 @@ class GLOMAP_PT_sidebar(Panel):
             scale = context.preferences.system.ui_scale or 1
             width = max(22, int(context.region.width / scale / 7) - 6)
             if _SETUP.status != 'Ready':
+                setup.label(text='Tool setup:', icon='CONSOLE')
                 for line in textwrap.wrap(_SETUP.status, width=width):
                     setup.label(text=line)
             setup.prop(settings, 'setup_details',
                        icon='TRIA_DOWN' if settings.setup_details else 'TRIA_RIGHT', emboss=False)
             if settings.setup_details:
                 if _IMPORTER_ERROR:
+                    setup.label(text='Importer setup:', icon='ERROR')
                     for line in textwrap.wrap(_IMPORTER_ERROR, width=width):
                         setup.label(text=line)
                 for name in _TOOL_NAMES:

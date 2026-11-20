@@ -8,8 +8,8 @@ An install-from-disk Blender add-on for the existing all-frame video reconstruct
 
 ### Release choices and platform status
 
-- **Regular ZIP (`blender_glomap-v0.3.13.zip`):** Linux installation and **Install Tools** have been tested on the development machine. Testing on other operating systems is pending.
-- **Windows x64 tools-included ZIP (`blender_glomap-v0.3.13-windows-x64.zip`):** includes COLMAP, FFmpeg, FFprobe and their bundled dependencies. Native Windows testing is pending. Uses included executables without Micromamba installation; **Install Tools** verifies them and can run offline.
+- **Regular ZIP (`blender_glomap-v0.3.16.zip`):** Linux tool installation has been tested on the development machine. Testing on other operating systems is pending.
+- **Windows x64 tools-included ZIP (`blender_glomap-v0.3.16-windows-x64.zip`):** includes COLMAP, FFmpeg, FFprobe and their bundled dependencies. **Install / Repair Tools** verifies bundled tools offline; a Windows loader failure triggers a separate conda-forge CPU environment installation when online access is allowed. A verified managed environment takes precedence over the bundle and uses its own DLL/Qt paths. Native Windows execution testing is pending.
 - Both variants install directly into Blender and include Phot. Install only one variant at a time. The Windows bundle does not guarantee that Windows Security will allow the executables, nor does it resolve a Phot import error by itself.
 
 ### Manual tools (recommended on other platforms while testing is pending)
@@ -53,6 +53,11 @@ FFprobe comes with FFmpeg in these packages. These are setup instructions, not c
 ### Building releases
 
 Run `python scripts/package.py` for the regular ZIP. For the Windows edition, provide the official COLMAP 4.2.1 non-CUDA Windows ZIP and the FFmpeg Windows essentials ZIP:
+
+The Windows builder also requires `bundled/vc_runtime/`, which contains the
+Microsoft x64 runtime DLLs deployed beside COLMAP. To recreate these files, run
+`python scripts/prepare_windows_runtime.py` with `cabextract` installed.
+Packaging rejects missing required runtime DLLs and non-x64 runtime binaries.
 
 ```sh
 python scripts/package.py --colmap /path/to/colmap.zip --ffmpeg /path/to/ffmpeg.zip

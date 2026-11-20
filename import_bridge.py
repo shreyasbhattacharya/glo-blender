@@ -126,6 +126,20 @@ def import_error_details(exc):
     return next((line for line in reversed(lines) if not line.startswith('Location:')), type(exc).__name__)
 
 
+def configure_camera_backgrounds(collection):
+    """Show tracking reference frames at full opacity behind the point cloud."""
+    for obj in collection.all_objects:
+        if obj.type != 'CAMERA' or not obj.data.background_images:
+            continue
+        obj.data.show_background_images = True
+        for background in obj.data.background_images:
+            background.alpha = 1.0
+            background.show_background_image = True
+            background.display_depth = 'BACK'
+            if background.source == 'MOVIE_CLIP' and background.clip is not None:
+                background.use_camera_clip = False
+
+
 def import_dataset(dataset, settings, probe='ffprobe'):
     if not enabled():
         raise RuntimeError('Run Set Up Included Importer first')
@@ -141,6 +155,8 @@ def import_dataset(dataset, settings, probe='ffprobe'):
         raise ValueError('The dataset image directory is missing')
     for collection in bpy.data.collections:
         if collection.get('glomap_dataset') == str(dataset) and collection.get('glomap_complete'):
+            if settings.background_images:
+                configure_camera_backgrounds(collection)
             return collection, 'Already imported; existing collection kept'
     video = ''
     metadata = dataset / 'source-and-settings.txt'
@@ -231,6 +247,8 @@ def import_dataset(dataset, settings, probe='ffprobe'):
             cameras.hide_viewport = True
             for view_layer in bpy.context.scene.view_layers:
                 hide_layer_collection(view_layer.layer_collection, cameras)
+    if settings.background_images:
+        configure_camera_backgrounds(parent)
     parent['glomap_complete'] = True
     warning = ''
     rate_info = source_rate(video, probe)
